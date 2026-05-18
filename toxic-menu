@@ -1,0 +1,1208 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════
+#  🔥 TOXIC VPN SERVER MENU v3.0 🔥
+#  Premium SSH/V2Ray/Dropbear/SSL VPN Server Manager
+#  GitHub: git clone https://github.com/YOUR_USERNAME/toxic-vpn-menu
+# ═══════════════════════════════════════════════════════════════════
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# ─── Color Definitions ────────────────────────────────────────
+RST='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
+RED='\033[0;31m'; RED_B='\033[1;31m'
+GREEN='\033[0;32m'; GREEN_B='\033[1;32m'
+YELLOW='\033[0;33m'; YELLOW_B='\033[1;33m'
+BLUE='\033[0;34m'; BLUE_B='\033[1;34m'
+CYAN='\033[0;36m'; CYAN_B='\033[1;36m'
+MAGENTA='\033[0;35m'; MAGENTA_B='\033[1;35m'
+WHITE='\033[1;37m'; ORANGE='\033[38;5;202m'
+
+# ─── Config ───────────────────────────────────────────────────
+TOXIC_DIR="/etc/toxic-vpn"
+TOXIC_LOG="/var/log/toxic-vpn"
+TOXIC_DB="${TOXIC_DIR}/accounts.db"
+DOMAIN_FILE="${TOXIC_DIR}/domain.conf"
+CERT_DIR="${TOXIC_DIR}/ssl"
+SETTINGS_FILE="${TOXIC_DIR}/settings.conf"
+
+SSH_PORT=22
+DROPBEAR_PORT=443
+V2RAY_PORT=10000
+V2RAY_WS_PORT=2083
+SSL_PORT=443
+OPENVPN_PORT=1194
+
+# ─── Create directories ──────────────────────────────────────
+mkdir -p "$TOXIC_DIR" "$TOXIC_LOG" "$CERT_DIR" 2>/dev/null
+
+# ─── Utility Functions ────────────────────────────────────────
+info()    { echo -e "  ${BLUE_B}[INFO]${RST}    $1"; }
+success() { echo -e "  ${GREEN_B}[OK]${RST}      $1"; }
+warn()    { echo -e "  ${YELLOW_B}[WARN]${RST}    $1"; }
+error()   { echo -e "  ${RED_B}[ERROR]${RST}   $1"; }
+
+separator() {
+    echo -e "${DIM}  ──────────────────────────────────────────────${RST}"
+}
+
+header() {
+    echo ""
+    echo -e "${CYAN_B}  ╔═══════════════════════════════════════════╗${RST}"
+    echo -e "${CYAN_B}  ║${RST} ${WHITE}$1${RST}"
+    echo -e "${CYAN_B}  ╚═══════════════════════════════════════════╝${RST}"
+    echo ""
+}
+
+press_enter() {
+    echo ""
+    read -n 1 -s -r -p $'\n  \033[1;33mPress ENTER to continue...\033[0m'
+}
+
+# ─── Check Root ───────────────────────────────────────────────
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "Run as root: sudo toxic-menu"
+        exit 1
+    fi
+}
+
+# ─── Detect OS ────────────────────────────────────────────────
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_ID=$ID
+    else
+        OS_ID="unknown"
+    fi
+}
+
+# ─── Get Server IP ────────────────────────────────────────────
+get_ip() {
+    curl -s ifconfig.me 2>/dev/null || ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
+}
+
+# ─── Get Domain ───────────────────────────────────────────────
+get_domain() {
+    if [ -f "$DOMAIN_FILE" ]; then
+        cat "$DOMAIN_FILE"
+    else
+        echo ""
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  ASCII BANNER
+# ═══════════════════════════════════════════════════════════════
+show_banner() {
+    clear
+    echo -e "${RED_B}"
+    cat << "BANNER"
+  ████████╗███████╗██╗  ██╗███████╗███╗   ██╗
+  ╚══██╔══╝██╔════╝██║ ██╔╝██╔════╝████╗  ██║
+     ██║   █████╗  █████╔╝ █████╗  ██╔██╗ ██║
+     ██║   ██╔══╝  ██╔═██╗ ██╔══╝  ██║╚██╗██║
+     ██║   ███████╗██║  ██╗███████╗██║ ╚████║
+     ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝
+BANNER
+    echo -e "${ORANGE}       ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗${RST}"
+    echo -e "${ORANGE}       ████╗  ██║██╔════╝██║  ██║██║   ██║██╔════╝${RST}"
+    echo -e "${ORANGE}       ██╔██╗ ██║█████╗  ███████║██║   ██║███████╗${RST}"
+    echo -e "${ORANGE}       ██║╚██╗██║██╔══╝  ██╔══██║██║   ██║╚════██║${RST}"
+    echo -e "${ORANGE}       ██║ ╚████║███████╗██║  ██║╚██████╔╝███████║${RST}"
+    echo -e "${ORANGE}       ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝${RST}"
+    echo ""
+    echo -e "${CYAN_B}  ══════════════════════════════════════════════${RST}"
+    echo -e "${GREEN_B}     VPN SERVER MENU v3.0${RST}"
+    echo -e "${CYAN_B}  ══════════════════════════════════════════════${RST}"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  STATUS BAR
+# ═══════════════════════════════════════════════════════════════
+show_status() {
+    local IP=$(get_ip)
+    local DOMAIN=$(get_domain)
+    local DOMAIN_DISPLAY=$([ -n "$DOMAIN" ] && echo "$DOMAIN" || echo "Not Set")
+
+    # Check service status
+    local SSH_STATUS=$(/usr/sbin/sshd -t 2>/dev/null && echo "${GREEN_B}ON${RST}" || echo "${RED_B}OFF${RST}")
+    local DROPBEAR_STATUS=$(pgrep dropbear > /dev/null 2>&1 && echo "${GREEN_B}ON${RST}" || echo "${RED_B}OFF${RST}")
+    local V2RAY_STATUS=$(pgrep v2ray > /dev/null 2>&1 && echo "${GREEN_B}ON${RST}" || echo "${RED_B}OFF${RST}")
+    local OPENVPN_STATUS=$(pgrep openvpn > /dev/null 2>&1 && echo "${GREEN_B}ON${RST}" || echo "${RED_B}OFF${RST}")
+
+    echo -e "${DIM}  ──────────────────────────────────────────────${RST}"
+    echo -e "  ${WHITE}IP:${RST}      ${GREEN_B}${IP}${RST}"
+    echo -e "  ${WHITE}Domain:${RST}  ${GREEN_B}${DOMAIN_DISPLAY}${RST}"
+    echo -e "  ${WHITE}SSH:${RST}     ${SSH_STATUS}  ${WHITE}Dropbear:${RST} ${DROPBEAR_STATUS}"
+    echo -e "  ${WHITE}V2Ray:${RST}   ${V2RAY_STATUS}  ${WHITE}OpenVPN:${RST}  ${OPENVPN_STATUS}"
+    echo -e "${DIM}  ──────────────────────────────────────────────${RST}"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  MAIN MENU
+# ═══════════════════════════════════════════════════════════════
+main_menu() {
+    while true; do
+        show_banner
+        show_status
+        echo ""
+        echo -e "${MAGENTA_B}  ╔════════════════════════════════════════╗${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${WHITE}🔥 MAIN MENU${RST}                            ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ╠════════════════════════════════════════╣${RST}"
+        echo -e "${MAGENTA_B}  ║${RST}                                        ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}1)${RST} ${WHITE}SSH Menu${RST}                          ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}2)${RST} ${WHITE}V2Ray Menu${RST}                        ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}3)${RST} ${WHITE}Dropbear Menu${RST}                     ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}4)${RST} ${WHITE}OpenVPN Menu${RST}                      ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}5)${RST} ${WHITE}SSL/TLS Menu${RST}                      ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}6)${RST} ${WHITE}Domain Setup${RST}                      ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}7)${RST} ${WHITE}User Management${RST}                   ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}8)${RST} ${WHITE}System Info${RST}                       ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${GREEN_B}9)${RST} ${WHITE}Auto Install All${RST}                  ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST}                                        ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST} ${RED_B}0)${RST} ${WHITE}Exit${RST}                               ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ║${RST}                                        ${MAGENTA_B}║${RST}"
+        echo -e "${MAGENTA_B}  ╚════════════════════════════════════════╝${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect [0-9]: \033[0m' choice
+
+        case "$choice" in
+            1) ssh_menu ;;
+            2) v2ray_menu ;;
+            3) dropbear_menu ;;
+            4) openvpn_menu ;;
+            5) ssl_menu ;;
+            6) domain_setup ;;
+            7) user_menu ;;
+            8) system_info ;;
+            9) auto_install ;;
+            0) echo -e "\n  ${GREEN_B}Goodbye! 🔥${RST}\n"; exit 0 ;;
+            *) warn "Invalid option!"; sleep 1 ;;
+        esac
+    done
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  SSH MENU
+# ═══════════════════════════════════════════════════════════════
+ssh_menu() {
+    while true; do
+        show_banner
+        header "🔐 SSH MENU"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Install OpenSSH Server${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}Configure SSH Port${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Create SSH Account${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}Delete SSH Account${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}List SSH Accounts${RST}"
+        echo -e "  ${GREEN_B}6)${RST} ${WHITE}SSH Speed Limit${RST}"
+        echo -e "  ${GREEN_B}7)${RST} ${WHITE}Restart SSH${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) install_ssh ;;
+            2) config_ssh_port ;;
+            3) create_ssh_account ;;
+            4) delete_ssh_account ;;
+            5) list_accounts "ssh" ;;
+            6) ssh_speed_limit ;;
+            7) systemctl restart ssh 2>/dev/null || systemctl restart sshd; success "SSH restarted!" ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+install_ssh() {
+    header "📦 Installing OpenSSH"
+    if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+        apt-get update -qq && apt-get install -y -qq openssh-server
+    else
+        yum install -y -q openssh-server 2>/dev/null || dnf install -y -q openssh-server
+    fi
+    systemctl enable ssh 2>/dev/null || systemctl enable sshd
+    systemctl start ssh 2>/dev/null || systemctl start sshd
+    success "OpenSSH installed and running on port ${SSH_PORT}!"
+}
+
+config_ssh_port() {
+    header "⚙️  Configure SSH Port"
+    read -p $'  \033[1;33mEnter new SSH port: \033[0m' new_port
+    if [[ "$new_port" =~ ^[0-9]+$ ]] && [ "$new_port" -ge 1 ] && [ "$new_port" -le 65535 ]; then
+        sed -i "s/^#*Port .*/Port ${new_port}/" /etc/ssh/sshd_config
+        systemctl restart ssh 2>/dev/null || systemctl restart sshd
+        SSH_PORT=$new_port
+        echo "SSH_PORT=${SSH_PORT}" > "${TOXIC_DIR}/ssh_port.conf"
+        success "SSH port changed to ${new_port}!"
+    else
+        error "Invalid port number!"
+    fi
+}
+
+create_ssh_account() {
+    header "👤 Create SSH Account"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    read -s -p $'  \033[1;33mPassword: \033[0m' password
+    echo ""
+
+    if [ -z "$username" ] || [ -z "$password" ]; then
+        error "Username and password required!"
+        return
+    fi
+
+    if id "$username" &>/dev/null; then
+        echo "$username:$password" | chpasswd
+        warn "User exists — password updated!"
+    else
+        useradd -m -s /bin/bash "$username"
+        echo "$username:$password" | chpasswd
+    fi
+
+    # Save to toxic accounts db
+    echo "ssh|${username}|${password}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+    success "SSH account '${username}' created!"
+}
+
+delete_ssh_account() {
+    header "🗑️  Delete SSH Account"
+    read -p $'  \033[1;33mUsername to delete: \033[0m' username
+    if id "$username" &>/dev/null; then
+        userdel -r "$username" 2>/dev/null
+        sed -i "/^ssh|${username}|/d" "$TOXIC_DB"
+        success "Account '${username}' deleted!"
+    else
+        error "User not found!"
+    fi
+}
+
+ssh_speed_limit() {
+    header "⚡ SSH Speed Limit"
+    echo -e "  ${WHITE}1)${RST} 1 Mbps"
+    echo -e "  ${WHITE}2)${RST} 5 Mbps"
+    echo -e "  ${WHITE}3)${RST} 10 Mbps"
+    echo -e "  ${WHITE}4)${RST} Unlimited"
+    read -p $'  \033[1;36mSelect: \033[0m' speed
+    # Using trickle or tc for rate limiting — store config
+    local rate=""
+    case "$speed" in
+        1) rate="1mbit" ;;
+        2) rate="5mbit" ;;
+        3) rate="10mbit" ;;
+        4) rate="" ;;
+        *) warn "Invalid!"; return ;;
+    esac
+    echo "SSH_SPEED_LIMIT=${rate}" > "${TOXIC_DIR}/ssh_speed.conf"
+    success "Speed limit set!"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  V2RAY MENU
+# ═══════════════════════════════════════════════════════════════
+v2ray_menu() {
+    while true; do
+        show_banner
+        header "🚀 V2RAY MENU"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Install V2Ray${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}Create VMess Account${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Create VLESS Account${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}Create V2Ray + WS + TLS${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}Create V2Ray + gRPC${RST}"
+        echo -e "  ${GREEN_B}6)${RST} ${WHITE}List V2Ray Accounts${RST}"
+        echo -e "  ${GREEN_B}7)${RST} ${WHITE}Delete V2Ray Account${RST}"
+        echo -e "  ${GREEN_B}8)${RST} ${WHITE}Restart V2Ray${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) install_v2ray ;;
+            2) create_vmess ;;
+            3) create_vless ;;
+            4) create_v2ray_ws_tls ;;
+            5) create_v2ray_grpc ;;
+            6) list_accounts "v2ray" ;;
+            7) delete_v2ray_account ;;
+            8) systemctl restart v2ray 2>/dev/null; success "V2Ray restarted!" ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+install_v2ray() {
+    header "📦 Installing V2Ray"
+    info "Downloading V2Ray install script..."
+
+    # Official V2Ray installer
+    bash <(curl -L https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh) 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        systemctl enable v2ray
+        systemctl start v2ray
+        success "V2Ray installed successfully!"
+    else
+        error "V2Ray installation failed!"
+    fi
+}
+
+create_vmess() {
+    header "🔵 Create VMess Account"
+    local DOMAIN=$(get_domain)
+    local IP=$(get_ip)
+    local UUID=$(cat /proc/sys/kernel/random/uuid)
+    local PORT=${V2RAY_PORT}
+
+    read -p $'  \033[1;33mPort (default 10000): \033[0m' custom_port
+    PORT=${custom_port:-$V2RAY_PORT}
+
+    read -p $'  \033[1;33mNetwork type [ws/tcp] (default ws): \033[0m' network
+    network=${network:-ws}
+
+    # Generate V2Ray config
+    cat > /usr/local/etc/v2ray/config.json << VMCONF
+{
+  "inbounds": [{
+    "port": ${PORT},
+    "protocol": "vmess",
+    "settings": {
+      "clients": [{ "id": "${UUID}", "alterId": 0 }]
+    },
+    "streamSettings": {
+      "network": "${network}",
+      "wsSettings": { "path": "/vmess" }
+    }
+  }],
+  "outbounds": [{ "protocol": "freedom" }]
+}
+VMCONF
+
+    systemctl restart v2ray 2>/dev/null
+    echo "v2ray|vmess|${UUID}|${PORT}|${network}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+
+    # Generate vmess link
+    local VMESS_RAW="{\"v\":\"2\",\"ps\":\"TOXIC-VMess\",\"add\":\"${IP}\",\"port\":\"${PORT}\",\"id\":\"${UUID}\",\"aid\":\"0\",\"net\":\"${network}\",\"type\":\"none\",\"host\":\"\",\"path\":\"/vmess\",\"tls\":\"\"}"
+    local VMESS_LINK="vmess://$(echo -n "$VMESS_RAW" | base64 -w 0)"
+
+    echo ""
+    echo -e "${GREEN_B}  ✅ VMess Account Created!${RST}"
+    separator
+    echo -e "  ${WHITE}UUID:${RST}     ${GREEN_B}${UUID}${RST}"
+    echo -e "  ${WHITE}Port:${RST}     ${GREEN_B}${PORT}${RST}"
+    echo -e "  ${WHITE}Network:${RST}   ${GREEN_B}${network}${RST}"
+    echo -e "  ${WHITE}Path:${RST}      ${GREEN_B}/vmess${RST}"
+    echo ""
+    echo -e "  ${CYAN_B}V2Ray Link:${RST}"
+    echo -e "  ${YELLOW}${VMESS_LINK}${RST}"
+}
+
+create_vless() {
+    header "🟢 Create VLESS Account"
+    local DOMAIN=$(get_domain)
+    local IP=$(get_ip)
+    local UUID=$(cat /proc/sys/kernel/random/uuid)
+    local PORT=443
+
+    read -p $'  \033[1;33mPort (default 443): \033[0m' custom_port
+    PORT=${custom_port:-443}
+
+    cat > /usr/local/etc/v2ray/config.json << VLCONF
+{
+  "inbounds": [{
+    "port": ${PORT},
+    "protocol": "vless",
+    "settings": {
+      "clients": [{ "id": "${UUID}", "flow": "xtls-rprx-vision" }],
+      "decryption": "none"
+    },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "tls",
+      "tlsSettings": {
+        "certificates": [{
+          "certificateFile": "${CERT_DIR}/fullchain.pem",
+          "keyFile": "${CERT_DIR}/privkey.pem"
+        }]
+      }
+    }
+  }],
+  "outbounds": [{ "protocol": "freedom" }]
+}
+VLCONF
+
+    systemctl restart v2ray 2>/dev/null
+    echo "v2ray|vless|${UUID}|${PORT}|tcp|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+
+    local VLESS_LINK="vless://${UUID}@${IP}:${PORT}?security=tls&type=tcp&flow=xtls-rprx-vision&headerType=none&sni=${DOMAIN}#TOXIC-VLESS"
+
+    echo ""
+    echo -e "${GREEN_B}  ✅ VLESS Account Created!${RST}"
+    separator
+    echo -e "  ${WHITE}UUID:${RST}     ${GREEN_B}${UUID}${RST}"
+    echo -e "  ${WHITE}Port:${RST}     ${GREEN_B}${PORT}${RST}"
+    echo -e "  ${WHITE}TLS:${RST}      ${GREEN_B}Enabled${RST}"
+    echo ""
+    echo -e "  ${CYAN_B}VLESS Link:${RST}"
+    echo -e "  ${YELLOW}${VLESS_LINK}${RST}"
+}
+
+create_v2ray_ws_tls() {
+    header "🔒 Create V2Ray + WS + TLS"
+    local DOMAIN=$(get_domain)
+    local IP=$(get_ip)
+    local UUID=$(cat /proc/sys/kernel/random/uuid)
+
+    if [ -z "$DOMAIN" ]; then
+        error "Set up a domain first (Main Menu > 6)!"
+        return
+    fi
+
+    if [ ! -f "${CERT_DIR}/fullchain.pem" ]; then
+        error "SSL certificate not found! Install SSL first (Main Menu > 5)!"
+        return
+    fi
+
+    read -p $'  \033[1;33mWS Port (default 443): \033[0m' ws_port
+    ws_port=${ws_port:-443}
+
+    cat > /usr/local/etc/v2ray/config.json << WSCONF
+{
+  "inbounds": [{
+    "port": ${ws_port},
+    "protocol": "vmess",
+    "settings": {
+      "clients": [{ "id": "${UUID}", "alterId": 0 }]
+    },
+    "streamSettings": {
+      "network": "ws",
+      "security": "tls",
+      "wsSettings": { "path": "/v2ray-ws" },
+      "tlsSettings": {
+        "certificates": [{
+          "certificateFile": "${CERT_DIR}/fullchain.pem",
+          "keyFile": "${CERT_DIR}/privkey.pem"
+        }]
+      }
+    }
+  }],
+  "outbounds": [{ "protocol": "freedom" }]
+}
+WSCONF
+
+    systemctl restart v2ray 2>/dev/null
+    echo "v2ray|vmess-ws-tls|${UUID}|${ws_port}|ws-tls|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+
+    local VMESS_RAW="{\"v\":\"2\",\"ps\":\"TOXIC-WS-TLS\",\"add\":\"${DOMAIN}\",\"port\":\"${ws_port}\",\"id\":\"${UUID}\",\"aid\":\"0\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"${DOMAIN}\",\"path\":\"/v2ray-ws\",\"tls\":\"tls\"}"
+    local VMESS_LINK="vmess://$(echo -n "$VMESS_RAW" | base64 -w 0)"
+
+    echo ""
+    echo -e "${GREEN_B}  ✅ V2Ray WS+TLS Account Created!${RST}"
+    separator
+    echo -e "  ${WHITE}UUID:${RST}     ${GREEN_B}${UUID}${RST}"
+    echo -e "  ${WHITE}Port:${RST}     ${GREEN_B}${ws_port}${RST}"
+    echo -e "  ${WHITE}Network:${RST}   ${GREEN_B}ws + tls${RST}"
+    echo -e "  ${WHITE}Domain:${RST}   ${GREEN_B}${DOMAIN}${RST}"
+    echo -e "  ${WHITE}Path:${RST}      ${GREEN_B}/v2ray-ws${RST}"
+    echo ""
+    echo -e "  ${CYAN_B}V2Ray Link:${RST}"
+    echo -e "  ${YELLOW}${VMESS_LINK}${RST}"
+}
+
+create_v2ray_grpc() {
+    header "⚡ Create V2Ray + gRPC"
+    local DOMAIN=$(get_domain)
+    local IP=$(get_ip)
+    local UUID=$(cat /proc/sys/kernel/random/uuid)
+    local GRPC_NAME="toxic-grpc"
+
+    cat > /usr/local/etc/v2ray/config.json << GRPCCONF
+{
+  "inbounds": [{
+    "port": 443,
+    "protocol": "vmess",
+    "settings": {
+      "clients": [{ "id": "${UUID}", "alterId": 0 }]
+    },
+    "streamSettings": {
+      "network": "grpc",
+      "grpcSettings": { "serviceName": "${GRPC_NAME}" },
+      "security": "tls",
+      "tlsSettings": {
+        "certificates": [{
+          "certificateFile": "${CERT_DIR}/fullchain.pem",
+          "keyFile": "${CERT_DIR}/privkey.pem"
+        }]
+      }
+    }
+  }],
+  "outbounds": [{ "protocol": "freedom" }]
+}
+GRPCCONF
+
+    systemctl restart v2ray 2>/dev/null
+    echo "v2ray|vmess-grpc|${UUID}|443|grpc|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+
+    local VMESS_RAW="{\"v\":\"2\",\"ps\":\"TOXIC-gRPC\",\"add\":\"${IP}\",\"port\":\"443\",\"id\":\"${UUID}\",\"aid\":\"0\",\"net\":\"grpc\",\"type\":\"none\",\"host\":\"${DOMAIN}\",\"path\":\"${GRPC_NAME}\",\"tls\":\"tls\"}"
+    local VMESS_LINK="vmess://$(echo -n "$VMESS_RAW" | base64 -w 0)"
+
+    echo ""
+    echo -e "${GREEN_B}  ✅ V2Ray gRPC Account Created!${RST}"
+    separator
+    echo -e "  ${WHITE}UUID:${RST}       ${GREEN_B}${UUID}${RST}"
+    echo -e "  ${WHITE}Port:${RST}       ${GREEN_B}443${RST}"
+    echo -e "  ${WHITE}Network:${RST}     ${GREEN_B}gRPC${RST}"
+    echo -e "  ${WHITE}ServiceName:${RST} ${GREEN_B}${GRPC_NAME}${RST}"
+    echo ""
+    echo -e "  ${CYAN_B}V2Ray Link:${RST}"
+    echo -e "  ${YELLOW}${VMESS_LINK}${RST}"
+}
+
+delete_v2ray_account() {
+    header "🗑️  Reset V2Ray Config"
+    read -p $'  \033[1;31mReset V2Ray config? [y/N]: \033[0m' confirm
+    if [[ "$confirm" == [Yy] ]]; then
+        echo '{}' > /usr/local/etc/v2ray/config.json 2>/dev/null
+        systemctl restart v2ray 2>/dev/null
+        sed -i '/^v2ray|/d' "$TOXIC_DB"
+        success "V2Ray accounts cleared!"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  DROPBEAR MENU
+# ═══════════════════════════════════════════════════════════════
+dropbear_menu() {
+    while true; do
+        show_banner
+        header "🐻 DROPBEAR MENU"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Install Dropbear${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}Configure Dropbear Port${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Create Dropbear Account${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}List Dropbear Accounts${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}Restart Dropbear${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) install_dropbear ;;
+            2) config_dropbear_port ;;
+            3) create_dropbear_account ;;
+            4) list_accounts "dropbear" ;;
+            5) systemctl restart dropbear 2>/dev/null; success "Dropbear restarted!" ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+install_dropbear() {
+    header "📦 Installing Dropbear"
+    if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+        apt-get update -qq && apt-get install -y -qq dropbear
+    else
+        yum install -y -q dropbear 2>/dev/null || dnf install -y -q dropbear
+    fi
+
+    # Configure
+    sed -i 's/NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null
+    echo "DROPBEAR_PORT=${DROPBEAR_PORT}" >> /etc/default/dropbear 2>/dev/null
+    systemctl enable dropbear
+    systemctl start dropbear
+    success "Dropbear installed on port ${DROPBEAR_PORT}!"
+}
+
+config_dropbear_port() {
+    header "⚙️  Configure Dropbear Port"
+    read -p $'  \033[1;33mEnter port (default 443): \033[0m' new_port
+    new_port=${new_port:-443}
+    sed -i "s/DROPBEAR_PORT=.*/DROPBEAR_PORT=${new_port}/" /etc/default/dropbear 2>/dev/null
+    DROPBEAR_PORT=$new_port
+    systemctl restart dropbear 2>/dev/null
+    success "Dropbear port set to ${new_port}!"
+}
+
+create_dropbear_account() {
+    header "👤 Create Dropbear Account"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    read -s -p $'  \033[1;33mPassword: \033[0m' password
+    echo ""
+
+    if [ -z "$username" ] || [ -z "$password" ]; then
+        error "Username and password required!"
+        return
+    fi
+
+    if id "$username" &>/dev/null; then
+        echo "$username:$password" | chpasswd
+    else
+        useradd -m -s /usr/sbin/nologin "$username"
+        echo "$username:$password" | chpasswd
+    fi
+
+    echo "dropbear|${username}|${password}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+    success "Dropbear account '${username}' created!"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  OPENVPN MENU
+# ═══════════════════════════════════════════════════════════════
+openvpn_menu() {
+    while true; do
+        show_banner
+        header "🛡️  OPENVPN MENU"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Install OpenVPN${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}Create OpenVPN User${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Revoke OpenVPN User${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}List OpenVPN Users${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}Restart OpenVPN${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) install_openvpn ;;
+            2) create_openvpn_user ;;
+            3) revoke_openvpn_user ;;
+            4) list_accounts "openvpn" ;;
+            5) systemctl restart openvpn 2>/dev/null; success "OpenVPN restarted!" ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+install_openvpn() {
+    header "📦 Installing OpenVPN"
+    info "Running OpenVPN auto-installer..."
+    curl -O https://raw.githubusercontent.com/angristan/openvpn-install/master/openvpn-install.sh
+    chmod +x openvpn-install.sh
+    AUTO_INSTALL=y HEADLESS=y bash openvpn-install.sh
+    rm -f openvpn-install.sh
+    success "OpenVPN installed!"
+}
+
+create_openvpn_user() {
+    header "👤 Create OpenVPN User"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    if [ -z "$username" ]; then
+        error "Username required!"
+        return
+    fi
+    MENU_OPTION=1 CLIENT="$username" PASS=1 bash openvpn-install.sh 2>/dev/null || \
+    curl -s https://raw.githubusercontent.com/angristan/openvpn-install/master/openvpn-install.sh | \
+    MENU_OPTION=1 CLIENT="$username" bash
+    echo "openvpn|${username}||$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+    success "OpenVPN user '${username}' created!"
+}
+
+revoke_openvpn_user() {
+    header "🗑️  Revoke OpenVPN User"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    MENU_OPTION=2 CLIENT="$username" bash openvpn-install.sh 2>/dev/null || \
+    curl -s https://raw.githubusercontent.com/angristan/openvpn-install/master/openvpn-install.sh | \
+    MENU_OPTION=2 CLIENT="$username" bash
+    sed -i "/^openvpn|${username}|/d" "$TOXIC_DB"
+    success "OpenVPN user '${username}' revoked!"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  SSL/TLS MENU
+# ═══════════════════════════════════════════════════════════════
+ssl_menu() {
+    while true; do
+        show_banner
+        header "🔒 SSL/TLS MENU"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Install Certbot (Let's Encrypt)${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}Generate SSL Certificate${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Generate Self-Signed SSL${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}Renew SSL Certificate${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}View SSL Info${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) install_certbot ;;
+            2) generate_ssl ;;
+            3) generate_self_signed ;;
+            4) renew_ssl ;;
+            5) view_ssl_info ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+install_certbot() {
+    header "📦 Installing Certbot"
+    if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+        apt-get update -qq && apt-get install -y -qq certbot
+    else
+        yum install -y -q certbot 2>/dev/null || dnf install -y -q certbot
+    fi
+    success "Certbot installed!"
+}
+
+generate_ssl() {
+    header "🔐 Generate SSL Certificate"
+    local DOMAIN=$(get_domain)
+    if [ -z "$DOMAIN" ]; then
+        error "Set up a domain first! (Main Menu > 6)"
+        return
+    fi
+
+    info "Generating SSL for ${DOMAIN}..."
+    certbot certonly --standalone -d "$DOMAIN" --non-interactive --agree-tos --email admin@${DOMAIN}
+
+    # Copy to toxic dir
+    cp -f /etc/letsencrypt/live/${DOMAIN}/fullchain.pem "${CERT_DIR}/" 2>/dev/null
+    cp -f /etc/letsencrypt/live/${DOMAIN}/privkey.pem "${CERT_DIR}/" 2>/dev/null
+
+    # Auto-renew cron
+    (crontab -l 2>/dev/null; echo "0 0 * * * certbot renew --quiet && cp /etc/letsencrypt/live/${DOMAIN}/*.pem ${CERT_DIR}/") | sort -u | crontab -
+
+    success "SSL certificate generated for ${DOMAIN}!"
+    info "Cert: ${CERT_DIR}/fullchain.pem"
+    info "Key:  ${CERT_DIR}/privkey.pem"
+}
+
+generate_self_signed() {
+    header "🔐 Generate Self-Signed SSL"
+    local DOMAIN=$(get_domain)
+    DOMAIN=${DOMAIN:-$(get_ip)}
+
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "${CERT_DIR}/privkey.pem" \
+        -out "${CERT_DIR}/fullchain.pem" \
+        -subj "/CN=${DOMAIN}/O=TOXIC-VPN/C=KE" 2>/dev/null
+
+    success "Self-signed SSL generated for ${DOMAIN}!"
+    warn "Note: Self-signed certs will show browser warnings."
+}
+
+renew_ssl() {
+    header "🔄 Renewing SSL"
+    certbot renew --quiet
+    local DOMAIN=$(get_domain)
+    if [ -n "$DOMAIN" ]; then
+        cp -f /etc/letsencrypt/live/${DOMAIN}/fullchain.pem "${CERT_DIR}/" 2>/dev/null
+        cp -f /etc/letsencrypt/live/${DOMAIN}/privkey.pem "${CERT_DIR}/" 2>/dev/null
+    fi
+    success "SSL renewed!"
+}
+
+view_ssl_info() {
+    header "📋 SSL Certificate Info"
+    if [ -f "${CERT_DIR}/fullchain.pem" ]; then
+        openssl x509 -in "${CERT_DIR}/fullchain.pem" -noout -subject -dates -issuer 2>/dev/null
+    else
+        warn "No SSL certificate found!"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  DOMAIN SETUP
+# ═══════════════════════════════════════════════════════════════
+domain_setup() {
+    while true; do
+        show_banner
+        header "🌐 DOMAIN SETUP"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Set Domain${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}Point Domain to This VPS (Cloudflare)${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Install Nginx (Reverse Proxy)${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}Configure Nginx for V2Ray${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}Test Domain${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) set_domain ;;
+            2) cloudflare_setup ;;
+            3) install_nginx ;;
+            4) nginx_v2ray_proxy ;;
+            5) test_domain ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+set_domain() {
+    header "🌐 Set Domain"
+    echo -e "  ${DIM}Point your domain A record to $(get_ip) first!${RST}"
+    echo ""
+    read -p $'  \033[1;33mEnter your domain (e.g. vpn.example.com): \033[0m' domain
+    if [ -n "$domain" ]; then
+        echo "$domain" > "$DOMAIN_FILE"
+        success "Domain set to: ${domain}"
+    else
+        error "Domain cannot be empty!"
+    fi
+}
+
+cloudflare_setup() {
+    header "☁️  Cloudflare DNS Setup"
+    local IP=$(get_ip)
+    local DOMAIN=$(get_domain)
+
+    echo ""
+    echo -e "  ${WHITE}Follow these steps on Cloudflare:${RST}"
+    echo ""
+    echo -e "  ${GREEN_B}1.${RST} Go to ${CYAN}https://dash.cloudflare.com${RST}"
+    echo -e "  ${GREEN_B}2.${RST} Add your domain or select existing"
+    echo -e "  ${GREEN_B}3.${RST} Go to DNS > Records"
+    echo -e "  ${GREEN_B}4.${RST} Add A Record:"
+    echo -e "     ${WHITE}Type:${RST}   A"
+    echo -e "     ${WHITE}Name:${RST}   @ (or vpn, ssh, etc.)"
+    echo -e "     ${WHITE}Value:${RST}  ${GREEN_B}${IP}${RST}"
+    echo -e "     ${WHITE}Proxy:${RST}  ${YELLOW_B}DNS Only (gray cloud)${RST}"
+    echo ""
+    echo -e "  ${YELLOW_B}⚠️  IMPORTANT: Turn OFF Cloudflare proxy (orange cloud)${RST}"
+    echo -e "  ${YELLOW_B}    for VPN/SSH traffic. Use DNS Only (gray cloud)!${RST}"
+    echo ""
+    echo -e "  ${GREEN_B}5.${RST} Set SSL mode to ${CYAN_B}Full${RST} in SSL/TLS settings"
+    echo ""
+}
+
+install_nginx() {
+    header "📦 Installing Nginx"
+    if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+        apt-get update -qq && apt-get install -y -qq nginx
+    else
+        yum install -y -q nginx 2>/dev/null || dnf install -y -q nginx
+    fi
+    systemctl enable nginx
+    systemctl start nginx
+    success "Nginx installed and running!"
+}
+
+nginx_v2ray_proxy() {
+    header "⚙️  Configure Nginx for V2Ray"
+    local DOMAIN=$(get_domain)
+    if [ -z "$DOMAIN" ]; then
+        error "Set domain first!"
+        return
+    fi
+    if [ ! -f "${CERT_DIR}/fullchain.pem" ]; then
+        error "Generate SSL certificate first!"
+        return
+    fi
+
+    cat > /etc/nginx/sites-available/v2ray << NGINXCONF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # Websocket path for V2Ray
+    location /v2ray-ws {
+        proxy_redirect off;
+        proxy_pass http://127.0.0.1:2083;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    # gRPC for V2Ray
+    location /toxic-grpc {
+        grpc_pass grpc://127.0.0.1:10000;
+        grpc_set_header X-Real-IP \$remote_addr;
+    }
+
+    # Default page (camouflage)
+    location / {
+        root /var/www/html;
+        index index.html;
+    }
+}
+NGINXCONF
+
+    ln -sf /etc/nginx/sites-available/v2ray /etc/nginx/sites-enabled/
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t 2>/dev/null && systemctl restart nginx
+    success "Nginx configured as V2Ray reverse proxy!"
+}
+
+test_domain() {
+    header "🧪 Test Domain"
+    local DOMAIN=$(get_domain)
+    if [ -z "$DOMAIN" ]; then
+        error "No domain set!"
+        return
+    fi
+    info "Resolving ${DOMAIN}..."
+    local RESOLVED=$(dig +short "$DOMAIN" | tail -1)
+    local IP=$(get_ip)
+    echo -e "  ${WHITE}Domain:${RST}     ${CYAN_B}${DOMAIN}${RST}"
+    echo -e "  ${WHITE}Resolves to:${RST} ${GREEN_B}${RESOLVED}${RST}"
+    echo -e "  ${WHITE}VPS IP:${RST}     ${GREEN_B}${IP}${RST}"
+
+    if [ "$RESOLVED" = "$IP" ]; then
+        success "Domain points to this VPS! ✅"
+    else
+        error "Domain does NOT point to this VPS! ❌"
+        info "Update your DNS A record to point to ${IP}"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  USER MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+user_menu() {
+    while true; do
+        show_banner
+        header "👥 USER MANAGEMENT"
+        echo -e "  ${GREEN_B}1)${RST} ${WHITE}Create Account (All Services)${RST}"
+        echo -e "  ${GREEN_B}2)${RST} ${WHITE}List All Accounts${RST}"
+        echo -e "  ${GREEN_B}3)${RST} ${WHITE}Delete Account${RST}"
+        echo -e "  ${GREEN_B}4)${RST} ${WHITE}Set Account Expiry${RST}"
+        echo -e "  ${GREEN_B}5)${RST} ${WHITE}Lock/Unlock Account${RST}"
+        echo -e "  ${RED_B}0)${RST} ${WHITE}Back${RST}"
+        echo ""
+        read -p $'  \033[1;36mSelect: \033[0m' ch
+
+        case "$ch" in
+            1) create_all_account ;;
+            2) list_accounts "all" ;;
+            3) delete_any_account ;;
+            4) set_expiry ;;
+            5) lock_unlock ;;
+            0) break ;;
+            *) warn "Invalid!"; sleep 1 ;;
+        esac
+        press_enter
+    done
+}
+
+create_all_account() {
+    header "👤 Create Account (SSH + Dropbear)"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    read -s -p $'  \033[1;33mPassword: \033[0m' password
+    echo ""
+
+    if [ -z "$username" ] || [ -z "$password" ]; then
+        error "Username and password required!"
+        return
+    fi
+
+    if id "$username" &>/dev/null; then
+        echo "$username:$password" | chpasswd
+        warn "User exists — password updated!"
+    else
+        useradd -m -s /bin/bash "$username"
+        echo "$username:$password" | chpasswd
+    fi
+
+    echo "ssh|${username}|${password}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+    echo "dropbear|${username}|${password}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+    success "Account '${username}' created for SSH + Dropbear!"
+
+    echo ""
+    echo -e "  ${CYAN_B}Connection Details:${RST}"
+    separator
+    local IP=$(get_ip)
+    local DOMAIN=$(get_domain)
+    local HOST=$([ -n "$DOMAIN" ] && echo "$DOMAIN" || echo "$IP")
+    echo -e "  ${WHITE}SSH:${RST}      ${GREEN_B}ssh ${username}@${HOST} -p ${SSH_PORT}${RST}"
+    echo -e "  ${WHITE}Dropbear:${RST}  ${GREEN_B}ssh ${username}@${HOST} -p ${DROPBEAR_PORT}${RST}"
+    echo -e "  ${WHITE}Password:${RST}  ${GREEN_B}${password}${RST}"
+}
+
+list_accounts() {
+    local filter="$1"
+    header "📋 Accounts"
+
+    if [ ! -f "$TOXIC_DB" ] || [ ! -s "$TOXIC_DB" ]; then
+        warn "No accounts found!"
+        return
+    fi
+
+    if [ "$filter" = "all" ]; then
+        echo -e "  ${CYAN_B}Type         Username       Created${RST}"
+        separator
+        while IFS='|' read -r type user pass date; do
+            printf "  %-12s %-14s %s\n" "$type" "$user" "$date"
+        done < "$TOXIC_DB"
+    else
+        echo -e "  ${CYAN_B}Type         Username       Created${RST}"
+        separator
+        grep "^${filter}|" "$TOXIC_DB" | while IFS='|' read -r type user pass date; do
+            printf "  %-12s %-14s %s\n" "$type" "$user" "$date"
+        done
+        if [ $? -ne 0 ]; then
+            warn "No ${filter} accounts found!"
+        fi
+    fi
+}
+
+delete_any_account() {
+    header "🗑️  Delete Account"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    if id "$username" &>/dev/null; then
+        userdel -r "$username" 2>/dev/null
+        sed -i "/|${username}|/d" "$TOXIC_DB"
+        success "Account '${username}' deleted!"
+    else
+        error "User not found!"
+    fi
+}
+
+set_expiry() {
+    header "⏰ Set Account Expiry"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    read -p $'  \033[1;33mDays until expiry: \033[0m' days
+    if id "$username" &>/dev/null; then
+        chage -M "$days" "$username"
+        success "Account '${username}' expires in ${days} days!"
+    else
+        error "User not found!"
+    fi
+}
+
+lock_unlock() {
+    header "🔒 Lock/Unlock Account"
+    read -p $'  \033[1;33mUsername: \033[0m' username
+    if ! id "$username" &>/dev/null; then
+        error "User not found!"
+        return
+    fi
+    echo -e "  ${GREEN_B}1)${RST} Lock"
+    echo -e "  ${GREEN_B}2)${RST} Unlock"
+    read -p $'  \033[1;36mSelect: \033[0m' action
+    case "$action" in
+        1) passwd -l "$username"; success "Account '${username}' locked!" ;;
+        2) passwd -u "$username"; success "Account '${username}' unlocked!" ;;
+        *) warn "Invalid!" ;;
+    esac
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  SYSTEM INFO
+# ═══════════════════════════════════════════════════════════════
+system_info() {
+    header "🖥️  SYSTEM INFORMATION"
+    local IP=$(get_ip)
+    local DOMAIN=$(get_domain)
+    local DOMAIN_DISPLAY=$([ -n "$DOMAIN" ] && echo "$DOMAIN" || echo "Not Set")
+
+    echo -e "  ${WHITE}OS:${RST}            ${GREEN_B}$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2)${RST}"
+    echo -e "  ${WHITE}Kernel:${RST}        ${GREEN_B}$(uname -r)${RST}"
+    echo -e "  ${WHITE}Uptime:${RST}        ${GREEN_B}$(uptime -p)${RST}"
+    echo -e "  ${WHITE}CPU:${RST}           ${GREEN_B}$(nproc) cores${RST}"
+    echo -e "  ${WHITE}RAM:${RST}           ${GREEN_B}$(free -h | awk '/^Mem:/{print $2}') total${RST}"
+    echo -e "  ${WHITE}Disk:${RST}          ${GREEN_B}$(df -h / | awk 'NR==2{print $2}') total${RST}"
+    echo -e "  ${WHITE}Server IP:${RST}     ${GREEN_B}${IP}${RST}"
+    echo -e "  ${WHITE}Domain:${RST}        ${GREEN_B}${DOMAIN_DISPLAY}${RST}"
+    echo ""
+    echo -e "  ${WHITE}Active Connections:${RST}"
+    echo -e "  ${WHITE}SSH:${RST}           ${GREEN_B}$(ss -tnp | grep ":${SSH_PORT}" | wc -l)${RST}"
+    echo -e "  ${WHITE}Dropbear:${RST}      ${GREEN_B}$(ss -tnp | grep ":${DROPBEAR_PORT}" | wc -l)${RST}"
+    echo -e "  ${WHITE}V2Ray:${RST}         ${GREEN_B}$(ss -tnp | grep ":${V2RAY_PORT}" | wc -l)${RST}"
+    echo ""
+    echo -e "  ${WHITE}Bandwidth (this month):${RST}"
+    local RX=$(cat /sys/class/net/$(ip route | awk '/default/ {print $5}' | head -1)/statistics/rx_bytes 2>/dev/null)
+    local TX=$(cat /sys/class/net/$(ip route | awk '/default/ {print $5}' | head -1)/statistics/tx_bytes 2>/dev/null)
+    echo -e "  ${WHITE}Download:${RST}      ${GREEN_B}$(( RX / 1024 / 1024 )) MB${RST}"
+    echo -e "  ${WHITE}Upload:${RST}        ${GREEN_B}$(( TX / 1024 / 1024 )) MB${RST}"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  AUTO INSTALL ALL
+# ═══════════════════════════════════════════════════════════════
+auto_install() {
+    show_banner
+    header "⚡ AUTO INSTALL ALL SERVICES"
+    echo -e "  ${YELLOW_B}This will install:${RST}"
+    echo -e "  ${GREEN_B}✓${RST} OpenSSH Server"
+    echo -e "  ${GREEN_B}✓${RST} Dropbear"
+    echo -e "  ${GREEN_B}✓${RST} V2Ray"
+    echo -e "  ${GREEN_B}✓${RST} Nginx"
+    echo -e "  ${GREEN_B}✓${RST} Certbot"
+    echo -e "  ${GREEN_B}✓${RST} Fail2Ban"
+    echo -e "  ${GREEN_B}✓${RST} UFW Firewall"
+    echo ""
+    read -p $'  \033[1;36mProceed? [Y/n]: \033[0m' confirm
+    if [[ "$confirm" == [Nn] ]]; then return; fi
+
+    # Install packages
+    info "Installing packages..."
+    if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+        apt-get update -qq
+        apt-get install -y -qq openssh-server dropbear nginx certbot fail2ban ufw
+    else
+        yum install -y -q openssh-server dropbear nginx certbot fail2ban ufw 2>/dev/null || \
+        dnf install -y -q openssh-server dropbear nginx certbot fail2ban ufw
+    fi
+
+    # Configure Dropbear
+    sed -i 's/NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null
+    systemctl enable dropbear ssh nginx fail2ban 2>/dev/null
+    systemctl start dropbear ssh nginx fail2ban 2>/dev/null
+
+    # Install V2Ray
+    info "Installing V2Ray..."
+    bash <(curl -L https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh) 2>/dev/null
+
+    # UFW
+    ufw default deny incoming > /dev/null 2>&1
+    ufw default allow outgoing > /dev/null 2>&1
+    ufw allow 22/tcp > /dev/null 2>&1
+    ufw allow 80/tcp > /dev/null 2>&1
+    ufw allow 443/tcp > /dev/null 2>&1
+    ufw allow 443/udp > /dev/null 2>&1
+    ufw allow 10000:20000/tcp > /dev/null 2>&1
+    echo "y" | ufw enable > /dev/null 2>&1
+
+    # Create default admin account
+    local ADMIN_USER="toxicadmin"
+    local ADMIN_PASS=$(openssl rand -base64 12)
+    useradd -m -s /bin/bash "$ADMIN_USER" 2>/dev/null
+    echo "$ADMIN_USER:$ADMIN_PASS" | chpasswd
+
+    echo "ssh|${ADMIN_USER}|${ADMIN_PASS}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+    echo "dropbear|${ADMIN_USER}|${ADMIN_PASS}|$(date +%Y-%m-%d)" >> "$TOXIC_DB"
+
+    echo ""
+    echo -e "${GREEN_B}  ╔════════════════════════════════════════╗${RST}"
+    echo -e "${GREEN_B}  ║   ✅ ALL SERVICES INSTALLED! ✅        ║${RST}"
+    echo -e "${GREEN_B}  ╚════════════════════════════════════════╝${RST}"
+    echo ""
+    echo -e "  ${WHITE}Admin User:${RST}    ${GREEN_B}${ADMIN_USER}${RST}"
+    echo -e "  ${WHITE}Admin Pass:${RST}    ${GREEN_B}${ADMIN_PASS}${RST}"
+    echo -e "  ${WHITE}SSH Port:${RST}      ${GREEN_B}22${RST}"
+    echo -e "  ${WHITE}Dropbear Port:${RST}  ${GREEN_B}443${RST}"
+    echo -e "  ${WHITE}V2Ray Port:${RST}     ${GREEN_B}10000${RST}"
+    echo ""
+    echo -e "  ${YELLOW_B}Next: Set domain (Menu 6) + SSL (Menu 5)${RST}"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ═══════════════════════════════════════════════════════════════
+check_root
+detect_os
+
+# Load saved settings
+[ -f "${TOXIC_DIR}/ssh_port.conf" ] && source "${TOXIC_DIR}/ssh_port.conf"
+
+main_menu
