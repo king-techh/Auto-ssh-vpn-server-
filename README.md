@@ -6,7 +6,7 @@ Premium VPN/SSH server management menu for VPS — SSH, V2Ray, Dropbear, OpenVPN
 
 ```bash
 # Clone from GitHub
-git clone https://github.com/YOUR_USERNAME/toxic-vpn-menu.git
+git clone https://github.com/king-techh/Auto-ssh-vpn-server-.git
 
 # Run the menu
 cd toxic-vpn-menu
